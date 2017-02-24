@@ -40,7 +40,9 @@ var makeGeneric = function makeGeneric(name) {
   if (typeof name !== "string") {
     return null;
   }
-  return name.replace(/\.[0-9]+\./g, '.$.').replace(/\.[0-9]+$/g, '.$');
+  var genericName = name.replace(/\.[0-9]+(?=\.|$)/g, '.$');
+  genericName = genericName.replace(/\.@#(.*?)#@/g, '.*');
+  return genericName;
 };
 
 var appendAffectedKey = function appendAffectedKey(affectedKey, key) {
@@ -60,7 +62,7 @@ var extractOp = function extractOp(position) {
 /*
  * @constructor
  * @param {Object} objOrModifier
- * @param {string[]} blackBoxKeys - A list of the names of keys that shouldn't be traversed
+ * @param {SimpleSchema} simpleSchema - A SimpleSchema instance
  * @returns {undefined}
  *
  * Creates a new MongoObject instance. The object passed as the first argument
@@ -68,8 +70,13 @@ var extractOp = function extractOp(position) {
  * upon creation of the instance, the object will have any `undefined` keys
  * removed recursively.
  */
-MongoObject = function(objOrModifier, blackBoxKeys) {
+MongoObject = function(objOrModifier, simpleSchema) {
   var self = this;
+  self._simpleSchema = simpleSchema;
+  var blackBoxKeys = [];
+  if (simpleSchema) {
+    blackBoxKeys = simpleSchema._blackboxKeys;
+  }
   self._obj = objOrModifier;
   self._affectedKeys = {};
   self._genericAffectedKeys = {};
@@ -114,7 +121,13 @@ MongoObject = function(objOrModifier, blackBoxKeys) {
       }
 
       // Make generic key
-      affectedKeyGeneric = makeGeneric(affectedKey);
+      if (self._simpleSchema) {
+        affectedKeyGeneric = self._simpleSchema.makeGeneric(affectedKey);
+      }
+      else {
+        affectedKeyGeneric = makeGeneric(affectedKey);
+      }
+
 
       // Determine whether affected key should be treated as a black box
       affectedKeyIsBlackBox = _.contains(blackBoxKeys, affectedKeyGeneric);
@@ -752,4 +765,3 @@ MongoObject._positionToKey = function positionToKey(position) {
   mDoc = null;
   return key;
 };
-

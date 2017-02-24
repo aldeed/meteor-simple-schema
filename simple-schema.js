@@ -20,7 +20,9 @@ var schemaDefinition = {
   blackbox: Match.Optional(Boolean),
   autoValue: Match.Optional(Function),
   defaultValue: Match.Optional(Match.Any),
-  trim: Match.Optional(Boolean)
+  trim: Match.Optional(Boolean),
+  hashmap: Match.Optional(Boolean),
+  fixedKeys: Match.Optional([String])
 };
 
 /*
@@ -442,6 +444,9 @@ SimpleSchema = function(schemas, options) {
   // store the list of blackbox keys for passing to MongoObject constructor
   self._blackboxKeys = [];
 
+  // store the list of hashmap keys
+  self._hashmapKeys = [];
+
   // a place to store custom validators for this instance
   self._validators = [];
 
@@ -491,6 +496,10 @@ SimpleSchema = function(schemas, options) {
 
     if (definition.blackbox === true) {
       self._blackboxKeys.push(fieldName);
+    }
+
+    if (definition.hashmap === true) {
+      self._hashmapKeys.push(fieldName);
     }
 
     if (!_.contains(firstLevelSchemaKeys, fieldNameRoot)) {
@@ -559,12 +568,29 @@ SimpleSchema.RegEx = {
   Phone: /^[0-9０-９٠-٩۰-۹]{2}$|^[+＋]*(?:[-x‐-―−ー－-／  ­​⁠　()（）［］.\[\]/~⁓∼～*]*[0-9０-９٠-٩۰-۹]){3,}[-x‐-―−ー－-／  ­​⁠　()（）［］.\[\]/~⁓∼～0-9０-９٠-٩۰-۹]*(?:;ext=([0-9０-９٠-٩۰-۹]{1,7})|[  \t,]*(?:e?xt(?:ensi(?:ó?|ó))?n?|ｅ?ｘｔｎ?|[,xｘ#＃~～]|int|anexo|ｉｎｔ)[:\.．]?[  \t,-]*([0-9０-９٠-٩۰-۹]{1,7})#?|[- ]+([0-9０-９٠-٩۰-۹]{1,5})#)?$/i
 };
 
-SimpleSchema._makeGeneric = function(name) {
+
+SimpleSchema._makeGeneric = function(name, ss) {
   if (typeof name !== "string") {
     return null;
   }
-
-  return name.replace(/\.[0-9]+(?=\.|$)/g, '.$');
+  var genericName = name.replace(/\.[0-9]+(?=\.|$)/g, '.$');
+  function getGeneric(schema, key) {
+    var splittedKeys = key.split('.');
+    for (var i = 1; i < splittedKeys.length; ++i) {
+        var parentSegments = splittedKeys.slice(0, i);
+        var parentKey = parentSegments.join('.');
+        var childKeys = schema.objectKeys(parentKey);
+        if (_.contains(childKeys, '*') && !_.contains(childKeys, splittedKeys[i])) {
+            splittedKeys[i] = '*';
+        }
+    }
+    return splittedKeys.join('.');
+  }
+  if (ss && ss.objectKeys) {
+      return getGeneric(ss, genericName);
+  } else {
+      return genericName;
+  }
 };
 
 SimpleSchema._depsGlobalMessages = new Deps.Dependency();
@@ -573,6 +599,10 @@ SimpleSchema._depsGlobalMessages = new Deps.Dependency();
 // This allow SimpleSchema instance to be recognized as a Match.Where instance as well
 // as a SimpleSchema instance
 SimpleSchema.prototype = new Match.Where();
+
+SimpleSchema.prototype.makeGeneric = function makeGeneric(key) {
+  return SimpleSchema._makeGeneric(key, this);
+};
 
 // If an object is an instance of Match.Where, Meteor built-in check API will look at
 // the function named `condition` and will pass it the document to validate
@@ -715,7 +745,7 @@ SimpleSchema.prototype.clean = function(doc, options) {
     }
   }
 
-  var mDoc = new MongoObject(doc, self._blackboxKeys);
+  var mDoc = new MongoObject(doc, self);
 
   // Clean loop
   if (options.filter || options.autoConvert || options.removeEmptyStrings || options.trimStrings) {
@@ -723,6 +753,10 @@ SimpleSchema.prototype.clean = function(doc, options) {
       var gKey = this.genericKey, p, def, val;
       if (gKey) {
         def = self._schema[gKey];
+        if (!def) {
+          gKey = self.makeGeneric(gKey);
+          def = self._schema[gKey];
+        }
         val = this.value;
         // Filter out props if necessary; any property is OK for $unset because we want to
         // allow conversions to remove props that have been removed from the schema.
@@ -809,7 +843,7 @@ SimpleSchema.prototype.schema = function(key) {
   var self = this;
   // if not null or undefined (more specific)
   if (key !== null && key !== void 0) {
-    return self._schema[SimpleSchema._makeGeneric(key)];
+    return self._schema[self.makeGeneric(key)];
   } else {
     return self._schema;
   }
@@ -849,7 +883,7 @@ SimpleSchema.prototype.getDefinition = function(key, propList, functionContext) 
 // Check if the key is a nested dot-syntax key inside of a blackbox object
 SimpleSchema.prototype.keyIsInBlackBox = function(key) {
   var self = this;
-  var parentPath = SimpleSchema._makeGeneric(key), lastDot, def;
+  var parentPath = self.makeGeneric(key), lastDot, def;
 
   // Iterate the dot-syntax hierarchy until we find a key in our schema
   do {
@@ -896,7 +930,7 @@ SimpleSchema.prototype.label = function(key) {
   // Get label for one field
   var def = self.getDefinition(key);
   if (def) {
-    var genericKey = SimpleSchema._makeGeneric(key);
+    var genericKey = self.makeGeneric(key);
     self._depsLabels[genericKey] && self._depsLabels[genericKey].depend();
     return def.label;
   }
@@ -988,7 +1022,7 @@ SimpleSchema.prototype.messageForError = function(type, key, def, value) {
 
   // Prep some strings to be used when finding the correct message for this error
   var typePlusKey = type + " " + key;
-  var genericKey = SimpleSchema._makeGeneric(key);
+  var genericKey = self.makeGeneric(key);
   var typePlusGenKey = type + " " + genericKey;
 
   // reactively update when message templates are changed
@@ -1048,7 +1082,7 @@ SimpleSchema.prototype.messageForError = function(type, key, def, value) {
 
   // [label]
   // The call to self.label() establishes a reactive dependency, too
-  message = message.replace("[label]", self.label(key));
+  message = message.replace("[label]", self.label(key) || key);
 
   // [minCount]
   if (typeof def.minCount !== "undefined") {
@@ -1169,10 +1203,21 @@ SimpleSchema.prototype.validate = function (obj, options) {
 
   // In order for the message at the top of the stack trace to be useful,
   // we set it to the first validation error message.
-  var message = validationContext.keyErrorMessage(errors[0].name);
+  var genericErrors = errors.map(toGenericError(this));
+  validationContext._invalidKeys = genericErrors;
+  var message = validationContext.keyErrorMessage(genericErrors[0].name);
 
   throw new Package['mdg:validation-error'].ValidationError(errors, message);
 };
+/*
+  Returns a function that converts an error into an error with generic names
+ */
+function toGenericError(ss) {
+  return function toGeneric (error) {
+    var genericName = ss.makeGeneric(error.name);
+    return _.extend({}, error, { name: genericName });
+  }
+}
 
 SimpleSchema.prototype.validator = function (options) {
   var self = this;

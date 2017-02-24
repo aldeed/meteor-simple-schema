@@ -56,6 +56,10 @@ function doTypeChecks(def, keyValue, op) {
   else if (expectedType === Object) {
     if (!Utility.isBasicObject(keyValue)) {
       return "expectedObject";
+    } else if (def.minCount !== null && def.hashmap === true && _.size(keyValue) < def.minCount) {
+      return "minCount";
+    } else if (def.maxCount !== null && def.hashmap === true && _.size(keyValue) > def.maxCount) {
+      return "maxCount";
     }
   }
 
@@ -175,7 +179,7 @@ doValidation1 = function doValidation1(obj, isModifier, isUpsert, keyToValidate,
         value: val,
         operator: op,
         field: function(fName) {
-          mDoc = mDoc || new MongoObject(obj, ss._blackboxKeys); //create if necessary, cache for speed
+          mDoc = mDoc || new MongoObject(obj, ss); //create if necessary, cache for speed
           var keyInfo = mDoc.getInfoForKey(fName) || {};
           return {
             isSet: (keyInfo.value !== void 0),
@@ -184,7 +188,7 @@ doValidation1 = function doValidation1(obj, isModifier, isUpsert, keyToValidate,
           };
         },
         siblingField: function(fName) {
-          mDoc = mDoc || new MongoObject(obj, ss._blackboxKeys); //create if necessary, cache for speed
+          mDoc = mDoc || new MongoObject(obj, ss); //create if necessary, cache for speed
           var keyInfo = mDoc.getInfoForKey(fieldParentName + fName) || {};
           return {
             isSet: (keyInfo.value !== void 0),
@@ -213,7 +217,7 @@ doValidation1 = function doValidation1(obj, isModifier, isUpsert, keyToValidate,
 
       // Make a generic version of the affected key, and use that
       // to get the schema for this key.
-      affectedKeyGeneric = SimpleSchema._makeGeneric(affectedKey);
+      affectedKeyGeneric = ss.makeGeneric(affectedKey);
       def = ss.getDefinition(affectedKey);
 
       // Perform validation for this key
@@ -242,8 +246,46 @@ doValidation1 = function doValidation1(obj, isModifier, isUpsert, keyToValidate,
       });
     }
 
+    // Validate hashmaps
+    if (Utility.isBasicObject(val) && def && def.hashmap) {
+      var fixedKeys = def.fixedKeys || [];
+      _.each(val, function (v, i) {
+        var composedAffectedKey = affectedKey + '.' + i;
+        if (_.contains(fixedKeys, i)){
+          composedAffectedKey = affectedKey + '.' + i;
+        }
+
+        if (Utility.isBasicObject(v)) {
+          // Check all the possible keys
+          var keysToCheck = ss.objectKeys(ss.makeGeneric(composedAffectedKey));
+          _.each(keysToCheck, function (key) {
+              checkObj(v[key], composedAffectedKey + '.' + key, operator, setKeys);
+          });
+        }
+
+        if (Utility.isBasicObject(v) && _.isEmpty(v)) {
+          var composedGenericAffectedKey = ss.makeGeneric(composedAffectedKey);
+          var childKeys = ss.objectKeys(composedGenericAffectedKey);
+          _.each(childKeys, function(childKey) {
+            checkObj(v[childKey], composedAffectedKey + '.' + childKey, operator,setKeys);
+          });
+        }
+        if (!Utility.isBasicObject(v)) {
+          checkObj(v, composedAffectedKey, operator, setKeys);
+        }
+      });
+      if (Utility.isBasicObject(val) && _.isEmpty(val)) {
+        var composedAffectedKey = affectedKey;
+        var composedGenericAffectedKey = ss.makeGeneric(composedAffectedKey);
+        var childKeys = ss.objectKeys(composedGenericAffectedKey);
+        _.each(childKeys, function(childKey) {
+          checkObj(val[childKey], composedAffectedKey + '.' + childKey, operator,setKeys);
+        });
+      }
+    }
+
     // Loop through object keys
-    else if (Utility.isBasicObject(val) && (!def || !def.blackbox)) {
+    else if (Utility.isBasicObject(val) && (!def || !def.blackbox || !def.hashmap)) {
 
       // Get list of present keys
       var presentKeys = _.keys(val);
