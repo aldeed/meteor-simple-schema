@@ -807,6 +807,28 @@ You can also specify override messages for specific fields:
   "errorType schemaKey": message
 }
 ```
+If you have schemas that contain fields that are of the `Schema` type:
+
+```js
+Schema.UserProfile = new SimpleSchema({
+  firstName: {
+    type: String
+  }
+});
+
+Schema.User = new SimpleSchema({
+  profile: {
+    type: Schema.UserProfile
+  }
+});
+```
+Overriding the specific message for `firstName` in `UserProfile` would look like this:
+
+```js
+{
+  "errorType profile.firstName": message
+}
+```
 
 For the `regEx` error type, you must specify a special message array of objects:
 
